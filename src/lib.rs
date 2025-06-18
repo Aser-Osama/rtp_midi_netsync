@@ -7,4 +7,4 @@ pub mod netsync;
 pub mod util;
 
 pub use error::Error;
-pub use netsync::Event;
+pub use std::result::Result;
