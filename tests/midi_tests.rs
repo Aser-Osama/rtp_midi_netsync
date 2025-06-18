@@ -1,5 +1,5 @@
 use rtp_midi_netsync::error::ParseError;
-use rtp_midi_netsync::midi::{build_midi_list, parse_midi_list, MidiEvent};
+use rtp_midi_netsync::midi::{build_midi_list, parse_midi_list, MidiEvent, MmcCommand};
 
 #[cfg(test)]
 mod tests {
@@ -91,8 +91,8 @@ mod tests {
         let result = parse_midi_list(&buf, 6).unwrap();
 
         match result {
-            MidiEvent::Mmc { stop } => assert!(stop),
-            _ => panic!("Expected Mmc Stop event"),
+            MidiEvent::Mmc(MmcCommand::Stop) => {}
+            _ => panic!("Expected MMC Stop event"),
         }
     }
 
@@ -103,20 +103,20 @@ mod tests {
         let result = parse_midi_list(&buf, 6).unwrap();
 
         match result {
-            MidiEvent::Mmc { stop } => assert!(!stop),
-            _ => panic!("Expected Mmc Play event"),
+            MidiEvent::Mmc(MmcCommand::Play) => {}
+            _ => panic!("Expected MMC Play event"),
         }
     }
 
     #[test]
     fn test_parse_mmc_invalid_command() {
-        // MMC with unrecognized command should fall back to play (false)
+        // MMC with unrecognized command should fall back to other
         let buf = [0xF0, 0x7F, 0x7F, 0x06, 0x99, 0xF7];
         let result = parse_midi_list(&buf, 6).unwrap();
 
         match result {
-            MidiEvent::Mmc { stop } => assert!(!stop), // Should default to play
-            _ => panic!("Expected Mmc event with default play behavior"),
+            MidiEvent::Other(bytes) => assert_eq!(bytes, vec![0xF0, 0x7F, 0x7F, 0x06, 0x99, 0xF7]),
+            _ => panic!("Expected MMC Play event for invalid command"),
         }
     }
 
@@ -279,19 +279,19 @@ mod tests {
     #[test]
     fn test_build_mmc_stop() {
         // Build MMC Stop command
-        let event = MidiEvent::Mmc { stop: true };
+        let event = MidiEvent::Mmc(MmcCommand::Stop);
         let result = build_midi_list(&event);
 
-        assert_eq!(result, vec![0xF0, 0x7F, 0x7F, 0x06, 0x01, 0xF7]);
+        assert_eq!(result, vec![0xF0, 0x7F, 0x7F, 0x06, 0x01, 0xF7])
     }
 
     #[test]
     fn test_build_mmc_play() {
         // Build MMC Play command
-        let event = MidiEvent::Mmc { stop: false };
+        let event = MidiEvent::Mmc(MmcCommand::Play);
         let result = build_midi_list(&event);
 
-        assert_eq!(result, vec![0xF0, 0x7F, 0x7F, 0x06, 0x02, 0xF7]);
+        assert_eq!(result, vec![0xF0, 0x7F, 0x7F, 0x06, 0x02, 0xF7])
     }
 
     #[test]
@@ -417,4 +417,100 @@ mod tests {
             _ => panic!("Expected Other event for wrong sub-IDs"),
         }
     }
+}
+
+// === MMC Locate Unit Tests ===
+
+#[test]
+fn test_parse_mmc_locate() {
+    // Parse MMC Locate command with standard format
+    let buf = [
+        0xF0, 0x7F, 0x7F, 0x06, 0x44, 0x06, 0x01, 0x02, 0x30, 0x45, 0x12, 0x00, 0xF7,
+    ];
+    let result = parse_midi_list(&buf, 13).unwrap();
+
+    match result {
+        MidiEvent::Mmc(MmcCommand::Locate {
+            hour,
+            minute,
+            second,
+            frame,
+            subframe,
+        }) => {
+            assert_eq!(hour, 0x02);
+            assert_eq!(minute, 0x30);
+            assert_eq!(second, 0x45);
+            assert_eq!(frame, 0x12);
+            assert_eq!(subframe, 0); // Should always be 0 in our implementation
+        }
+        _ => panic!("Expected Locate MMC event"),
+    }
+}
+
+#[test]
+fn test_parse_mmc_locate_invalid_format() {
+    // MMC Locate with wrong size byte should fall through to Other
+    let buf = [
+        0xF0, 0x7F, 0x7F, 0x06, 0x44, 0x05, 0x01, 0x02, 0x30, 0x45, 0x12, 0x00, 0xF7,
+    ];
+    let result = parse_midi_list(&buf, 13).unwrap();
+
+    match result {
+        MidiEvent::Other(bytes) => assert_eq!(bytes.len(), 13),
+        _ => panic!("Expected Other event for invalid Locate format"),
+    }
+
+    // MMC Locate with wrong constant byte should fall through to Other
+    let buf = [
+        0xF0, 0x7F, 0x7F, 0x06, 0x44, 0x06, 0x02, 0x02, 0x30, 0x45, 0x12, 0x00, 0xF7,
+    ];
+    let result = parse_midi_list(&buf, 13).unwrap();
+
+    match result {
+        MidiEvent::Other(bytes) => assert_eq!(bytes.len(), 13),
+        _ => panic!("Expected Other event for invalid Locate constant byte"),
+    }
+}
+
+#[test]
+fn test_parse_mmc_locate_incomplete() {
+    // Incomplete MMC Locate (missing bytes) should fall through to Other
+    let buf = [0xF0, 0x7F, 0x7F, 0x06, 0x44, 0x06, 0x01, 0x02, 0x30, 0x45];
+    let result = parse_midi_list(&buf, 10).unwrap();
+
+    match result {
+        MidiEvent::Other(bytes) => assert_eq!(bytes.len(), 10),
+        _ => panic!("Expected Other event for incomplete Locate command"),
+    }
+}
+
+#[test]
+fn test_build_mmc_locate() {
+    // Build MMC Locate command
+    let event = MidiEvent::Mmc(MmcCommand::Locate {
+        hour: 0x03,
+        minute: 0x14,
+        second: 0x59,
+        frame: 0x29,
+        subframe: 0x7F, // This should be ignored during building
+    });
+    let result = build_midi_list(&event);
+
+    assert_eq!(
+        result,
+        vec![0xF0, 0x7F, 0x7F, 0x06, 0x44, 0x06, 0x01, 0x03, 0x14, 0x59, 0x29, 0x00, 0xF7]
+    );
+    // Note: The subframe is always set to 0 in the built message
+}
+
+#[test]
+fn test_roundtrip_mmc_locate() {
+    // Parse -> build -> compare for MMC Locate
+    let original = [
+        0xF0, 0x7F, 0x7F, 0x06, 0x44, 0x06, 0x01, 0x12, 0x34, 0x56, 0x78, 0x00, 0xF7,
+    ];
+    let event = parse_midi_list(&original, 13).unwrap();
+    let rebuilt = build_midi_list(&event);
+
+    assert_eq!(original.to_vec(), rebuilt);
 }
