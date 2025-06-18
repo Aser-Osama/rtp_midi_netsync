@@ -4,7 +4,8 @@
 //!
 //! - **Quarter-Frame MTC (MIDI Time Code)**: `0xF1 nn` where `nn` encodes message type and value
 //! - **Full-Frame MTC (SysEx)**: `F0 7F devID 01 01 hr mn sc fr F7` for complete timecode
-//! - **MMC (MIDI Machine Control)**: `F0 7F devID 06 cmd F7` for transport control (Stop/Play)
+//! - **MMC (MIDI Machine Control)**: `F0 7F devID 06 cmd(01/02) F7` for transport control (Stop/Play/Locate)
+//! - **MMC (MIDI Machine Control)**: `F0 7F devID 06 cmd(44) bytes(06) 01 hr mn sc fr sf F7` for transport control (Locate)
 //! - **Other MIDI messages**: Treated as raw data for pass-through
 //!
 //! # Message Format Assumptions
@@ -38,7 +39,7 @@ const SYSEX_DEVICE_ID_BROADCAST: u8 = 0x7F;
 const UNIVERSAL_REALTIME_ID: u8 = 0x7F;
 
 /// Sub-ID for MIDI Machine Control (MMC) messages.
-const MMC_SUB_ID: u8 = 0x06;
+const MMC_SUB_ID1: u8 = 0x06;
 
 /// First sub-ID byte for Full-Frame MTC messages.
 const MTC_FULL_FRAME_SUB_ID1: u8 = 0x01;
@@ -47,16 +48,25 @@ const MTC_FULL_FRAME_SUB_ID1: u8 = 0x01;
 const MTC_FULL_FRAME_SUB_ID2: u8 = 0x01;
 
 /// MMC command byte for Stop transport control.
-const MMC_STOP_CMD: u8 = 0x01;
+const MMC_STOP_CMD_BYTE: u8 = 0x01;
 
 /// MMC command byte for Play transport control.
-const MMC_PLAY_CMD: u8 = 0x02;
+const MMC_PLAY_CMD_BYTE: u8 = 0x02;
+
+/// MMC Command byte for Locate transport control.
+const MMC_LOCATE_CMD_BYTE: u8 = 0x44;
+
+/// MMC Expected length of a complete Locate MTC SysEx message.
+const MMC_LOCATE_SIZE_BYTE: u8 = 0x06;
 
 /// Expected length of a complete Full-Frame MTC SysEx message.
 const MTC_FULL_FRAME_LENGTH: usize = 10;
 
 /// Expected length of a complete MMC SysEx message.
-const MMC_LENGTH: usize = 6;
+const MMC_START_STOP_LENGTH: usize = 6;
+
+/// Expected length of a complete Locate MTC SysEx message.
+const MMC_LOCATE_LENGTH: usize = 13;
 
 /// Expected length of a Quarter-Frame MTC message.
 const MTC_QUARTER_FRAME_LENGTH: usize = 2;
@@ -98,18 +108,45 @@ pub enum MidiEvent {
 
     /// # MIDI Machine Control (MMC) transport command.
     ///
-    /// Format: `F0 7F devID 06 cmd F7` where:
-    /// - `cmd = 0x01`: Stop
-    /// - `cmd = 0x02`: Play
-    ///
-    /// Used to control transport state (play/stop) across networked devices.
-    Mmc { stop: bool },
+    /// Represents MMC commands that affect transport state.
+    Mmc(MmcCommand),
 
     /// # Any other MIDI message not specifically handled.
     ///
     /// Raw bytes are preserved to allow pass-through of other MIDI data
     /// such as note events, control changes, etc.
     Other(Vec<u8>),
+}
+
+/// # MIDI Machine Control (MMC) command types.
+///
+/// MMC commands are used to control transport state and positioning
+/// across networked MIDI devices.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MmcCommand {
+    /// # Stop transport command.
+    ///
+    /// Format: `F0 7F devID 06 01 F7`
+    Stop,
+
+    /// # Play transport command.
+    ///
+    /// Format: `F0 7F devID 06 02 F7`
+    Play,
+
+    /// # Locate to timecode position command.
+    ///
+    /// Format: `F0 7F devID 06 44 06 01 hr mn sc fr sf F7`
+    /// where `sf` (subframe) is always 0 for this usecase.
+    ///
+    /// Used to position playback to a specific timecode location.
+    Locate {
+        hour: u8,
+        minute: u8,
+        second: u8,
+        frame: u8,
+        subframe: u8,
+    },
 }
 
 // ============================================================================
@@ -171,33 +208,51 @@ fn parse_midi(buf: &[u8], len: usize) -> Result<MidiEvent> {
             Some(end_pos) => (&buf[..=end_pos], end_pos + 1),
             None => (&buf[..len], len),
         };
-
-        // Full-Frame MTC: F0 7F devID 01 01 hr mn sc fr F7
-        if cmd_slice.len() >= MTC_FULL_FRAME_LENGTH
+        // All Universal Real-Time SysEx messages start with F0 7F devID
+        if cmd_slice.len() >= 4
             && cmd_slice[1] == UNIVERSAL_REALTIME_ID
             && cmd_slice[2] == SYSEX_DEVICE_ID_BROADCAST
-            && cmd_slice[3] == MTC_FULL_FRAME_SUB_ID1
-            && cmd_slice[4] == MTC_FULL_FRAME_SUB_ID2
             && cmd_slice[cmd_size - 1] == SYSEX_END
         {
-            return Ok(MidiEvent::MtcFull {
-                hour: cmd_slice[5],
-                minute: cmd_slice[6],
-                second: cmd_slice[7],
-                frame: cmd_slice[8],
-            });
-        }
+            // MMC Locate: F0 7F devID 06 44 06 01 hr mn sc fr sf F7
+            if cmd_slice.len() >= MMC_LOCATE_LENGTH
+                && cmd_slice[3] == MMC_SUB_ID1
+                && cmd_slice[4] == MMC_LOCATE_CMD_BYTE
+                && cmd_slice[5] == MMC_LOCATE_SIZE_BYTE
+                && cmd_slice[6] == 0x01
+            // Always 0x01 for Locate command
+            {
+                return Ok(MidiEvent::Mmc(MmcCommand::Locate {
+                    hour: cmd_slice[7],
+                    minute: cmd_slice[8],
+                    second: cmd_slice[9],
+                    frame: cmd_slice[10],
+                    subframe: 0, // Subframe is always 0 for this usecase
+                }));
+            }
 
-        // MMC Stop/Play: F0 7F devID 06 cmd F7
-        if cmd_slice.len() >= MMC_LENGTH
-            && cmd_slice[1] == UNIVERSAL_REALTIME_ID
-            && cmd_slice[2] == SYSEX_DEVICE_ID_BROADCAST
-            && cmd_slice[3] == MMC_SUB_ID
-            && cmd_slice[cmd_size - 1] == SYSEX_END
-        {
-            return Ok(MidiEvent::Mmc {
-                stop: cmd_slice[4] == MMC_STOP_CMD,
-            });
+            // Full-Frame MTC: F0 7F devID 01 01 hr mn sc fr F7
+            if cmd_slice.len() >= MTC_FULL_FRAME_LENGTH
+                && cmd_slice[3] == MTC_FULL_FRAME_SUB_ID1
+                && cmd_slice[4] == MTC_FULL_FRAME_SUB_ID2
+            {
+                return Ok(MidiEvent::MtcFull {
+                    hour: cmd_slice[5],
+                    minute: cmd_slice[6],
+                    second: cmd_slice[7],
+                    frame: cmd_slice[8],
+                });
+            }
+
+            // MMC Stop/Play: F0 7F devID 06 cmd F7
+            if cmd_slice.len() >= MMC_START_STOP_LENGTH && cmd_slice[3] == MMC_SUB_ID1 {
+                let cmd_byte = cmd_slice[4];
+                if cmd_byte == MMC_STOP_CMD_BYTE {
+                    return Ok(MidiEvent::Mmc(MmcCommand::Stop));
+                } else if cmd_byte == MMC_PLAY_CMD_BYTE {
+                    return Ok(MidiEvent::Mmc(MmcCommand::Play));
+                }
+            }
         }
 
         // Fallback for other SysEx
@@ -241,17 +296,51 @@ fn build_midi(event: &MidiEvent, buf: &mut Vec<u8>) {
                 SYSEX_END,
             ]);
         }
-        MidiEvent::Mmc { stop } => {
-            let cmd = if *stop { MMC_STOP_CMD } else { MMC_PLAY_CMD };
-            buf.extend_from_slice(&[
-                SYSEX_START,
-                UNIVERSAL_REALTIME_ID,
-                SYSEX_DEVICE_ID_BROADCAST,
-                MMC_SUB_ID,
-                cmd,
-                SYSEX_END,
-            ]);
-        }
+        MidiEvent::Mmc(mmc_cmd) => match mmc_cmd {
+            MmcCommand::Stop => {
+                buf.extend_from_slice(&[
+                    SYSEX_START,
+                    UNIVERSAL_REALTIME_ID,
+                    SYSEX_DEVICE_ID_BROADCAST,
+                    MMC_SUB_ID1,
+                    MMC_STOP_CMD_BYTE,
+                    SYSEX_END,
+                ]);
+            }
+            MmcCommand::Play => {
+                buf.extend_from_slice(&[
+                    SYSEX_START,
+                    UNIVERSAL_REALTIME_ID,
+                    SYSEX_DEVICE_ID_BROADCAST,
+                    MMC_SUB_ID1,
+                    MMC_PLAY_CMD_BYTE,
+                    SYSEX_END,
+                ]);
+            }
+            MmcCommand::Locate {
+                hour,
+                minute,
+                second,
+                frame,
+                subframe: _,
+            } => {
+                buf.extend_from_slice(&[
+                    SYSEX_START,
+                    UNIVERSAL_REALTIME_ID,
+                    SYSEX_DEVICE_ID_BROADCAST,
+                    MMC_SUB_ID1,
+                    MMC_LOCATE_CMD_BYTE,
+                    MMC_LOCATE_SIZE_BYTE, // Length byte, always 0x06 for Locate
+                    0x01,                 // Always 0x01 for Locate command
+                    *hour,
+                    *minute,
+                    *second,
+                    *frame,
+                    0x00, // Subframe is always 0 for this usecase
+                    SYSEX_END,
+                ]);
+            }
+        },
         MidiEvent::Other(bytes) => buf.extend_from_slice(bytes),
     }
 }
@@ -355,8 +444,8 @@ mod tests {
                 second: 45,
                 frame: 12,
             },
-            MidiEvent::Mmc { stop: true },
-            MidiEvent::Mmc { stop: false },
+            MidiEvent::Mmc(MmcCommand::Stop),
+            MidiEvent::Mmc(MmcCommand::Play),
             MidiEvent::Other(vec![0x90, 0x60, 0x7F]),
         ];
 
