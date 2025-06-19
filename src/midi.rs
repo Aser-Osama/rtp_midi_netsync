@@ -175,6 +175,7 @@ fn parse_midi(buf: &[u8], len: usize) -> Result<MidiEvent> {
     if len == 0 || buf.is_empty() {
         return Err(ParseError::EmptyBuffer);
     }
+
     if len > buf.len() {
         return Err(ParseError::BufferTooSmall {
             requested: len,
@@ -199,68 +200,71 @@ fn parse_midi(buf: &[u8], len: usize) -> Result<MidiEvent> {
         });
     }
 
-    // SysEx-based messages
-    if b0 == SYSEX_START {
-        // Find SysEx terminator or use all available bytes
-        let sysex_end_pos = buf.iter().position(|&b| b == SYSEX_END);
-
-        let (cmd_slice, cmd_size) = match sysex_end_pos {
-            Some(end_pos) => (&buf[..=end_pos], end_pos + 1),
-            None => (&buf[..len], len),
-        };
-        // All Universal Real-Time SysEx messages start with F0 7F devID
-        if cmd_slice.len() >= 4
-            && cmd_slice[1] == UNIVERSAL_REALTIME_ID
-            && cmd_slice[2] == SYSEX_DEVICE_ID_BROADCAST
-            && cmd_slice[cmd_size - 1] == SYSEX_END
-        {
-            // MMC Locate: F0 7F devID 06 44 06 01 hr mn sc fr sf F7
-            if cmd_slice.len() >= MMC_LOCATE_LENGTH
-                && cmd_slice[3] == MMC_SUB_ID1
-                && cmd_slice[4] == MMC_LOCATE_CMD_BYTE
-                && cmd_slice[5] == MMC_LOCATE_SIZE_BYTE
-                && cmd_slice[6] == 0x01
-            // Always 0x01 for Locate command
-            {
-                return Ok(MidiEvent::Mmc(MmcCommand::Locate {
-                    hour: cmd_slice[7],
-                    minute: cmd_slice[8],
-                    second: cmd_slice[9],
-                    frame: cmd_slice[10],
-                    subframe: 0, // Subframe is always 0 for this usecase
-                }));
-            }
-
-            // Full-Frame MTC: F0 7F devID 01 01 hr mn sc fr F7
-            if cmd_slice.len() >= MTC_FULL_FRAME_LENGTH
-                && cmd_slice[3] == MTC_FULL_FRAME_SUB_ID1
-                && cmd_slice[4] == MTC_FULL_FRAME_SUB_ID2
-            {
-                return Ok(MidiEvent::MtcFull {
-                    hour: cmd_slice[5],
-                    minute: cmd_slice[6],
-                    second: cmd_slice[7],
-                    frame: cmd_slice[8],
-                });
-            }
-
-            // MMC Stop/Play: F0 7F devID 06 cmd F7
-            if cmd_slice.len() >= MMC_START_STOP_LENGTH && cmd_slice[3] == MMC_SUB_ID1 {
-                let cmd_byte = cmd_slice[4];
-                if cmd_byte == MMC_STOP_CMD_BYTE {
-                    return Ok(MidiEvent::Mmc(MmcCommand::Stop));
-                } else if cmd_byte == MMC_PLAY_CMD_BYTE {
-                    return Ok(MidiEvent::Mmc(MmcCommand::Play));
-                }
-            }
-        }
-
-        // Fallback for other SysEx
-        return Ok(MidiEvent::Other(cmd_slice.to_vec()));
+    if b0 != SYSEX_START {
+        // Not a SysEx or Quarter-Frame message, treat as Other
+        return Ok(MidiEvent::Other(buf[..len].to_vec()));
     }
 
-    // Fallback for any other MIDI message
-    Ok(MidiEvent::Other(buf[..len].to_vec()))
+    // Find SysEx terminator or use all available bytes
+    let sysex_end_pos = buf.iter().position(|&b| b == SYSEX_END);
+
+    let (cmd_slice, cmd_size) = match sysex_end_pos {
+        Some(end_pos) => (&buf[..=end_pos], end_pos + 1),
+        None => (&buf[..len], len),
+    };
+
+    // SysEx-based messages
+    if !(cmd_slice.len() >= 4
+        && cmd_slice[1] == UNIVERSAL_REALTIME_ID
+        && cmd_slice[2] == SYSEX_DEVICE_ID_BROADCAST
+        && cmd_slice[cmd_size - 1] == SYSEX_END)
+    {
+        // Not a SysEx message, treat as Other
+        return Ok(MidiEvent::Other(buf[..len].to_vec()));
+    }
+
+    // MMC Locate: F0 7F devID 06 44 06 01 hr mn sc fr sf F7
+    if cmd_slice.len() >= MMC_LOCATE_LENGTH
+        && cmd_slice[3] == MMC_SUB_ID1
+        && cmd_slice[4] == MMC_LOCATE_CMD_BYTE
+        && cmd_slice[5] == MMC_LOCATE_SIZE_BYTE
+        && cmd_slice[6] == 0x01
+    // Always 0x01 for Locate command
+    {
+        return Ok(MidiEvent::Mmc(MmcCommand::Locate {
+            hour: cmd_slice[7],
+            minute: cmd_slice[8],
+            second: cmd_slice[9],
+            frame: cmd_slice[10],
+            subframe: 0, // Subframe is always 0 for this usecase
+        }));
+    }
+
+    // Full-Frame MTC: F0 7F devID 01 01 hr mn sc fr F7
+    if cmd_slice.len() >= MTC_FULL_FRAME_LENGTH
+        && cmd_slice[3] == MTC_FULL_FRAME_SUB_ID1
+        && cmd_slice[4] == MTC_FULL_FRAME_SUB_ID2
+    {
+        return Ok(MidiEvent::MtcFull {
+            hour: cmd_slice[5],
+            minute: cmd_slice[6],
+            second: cmd_slice[7],
+            frame: cmd_slice[8],
+        });
+    }
+
+    // MMC Stop/Play: F0 7F devID 06 cmd F7
+    if cmd_slice.len() >= MMC_START_STOP_LENGTH && cmd_slice[3] == MMC_SUB_ID1 {
+        let cmd_byte = cmd_slice[4];
+        if cmd_byte == MMC_STOP_CMD_BYTE {
+            return Ok(MidiEvent::Mmc(MmcCommand::Stop));
+        } else if cmd_byte == MMC_PLAY_CMD_BYTE {
+            return Ok(MidiEvent::Mmc(MmcCommand::Play));
+        }
+    }
+
+    // Fallback for other SysEx
+    return Ok(MidiEvent::Other(cmd_slice.to_vec()));
 }
 
 /// Serialize a MIDI event into a byte buffer.
