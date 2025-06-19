@@ -1,14 +1,16 @@
 use std::fmt;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Error {
     Parse(ParseError),
+    Mtc(MtcError),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Parse(e) => write!(f, "Parse error: {}", e),
+            Error::Mtc(e) => write!(f, "MTC error: {}", e),
         }
     }
 }
@@ -17,11 +19,12 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Parse(e) => Some(e),
+            Error::Mtc(e) => Some(e),
         }
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ParseError {
     /// Buffer is empty or length is zero
     EmptyBuffer,
@@ -88,5 +91,20 @@ impl std::fmt::Display for MtcError {
                 "Invalid value: exceeds valid range or creates invalid timecode"
             ),
         }
+    }
+}
+
+impl std::error::Error for MtcError {}
+
+// Convenience From implementations
+impl From<ParseError> for Error {
+    fn from(err: ParseError) -> Self {
+        Error::Parse(err)
+    }
+}
+
+impl From<MtcError> for Error {
+    fn from(err: MtcError) -> Self {
+        Error::Mtc(err)
     }
 }
