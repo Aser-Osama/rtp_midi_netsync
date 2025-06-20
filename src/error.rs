@@ -4,6 +4,7 @@ use std::fmt;
 pub enum Error {
     Parse(ParseError),
     Mtc(MtcError),
+    NetsyncError(NetsyncError),
 }
 
 impl fmt::Display for Error {
@@ -11,6 +12,7 @@ impl fmt::Display for Error {
         match self {
             Error::Parse(e) => write!(f, "Parse error: {}", e),
             Error::Mtc(e) => write!(f, "MTC error: {}", e),
+            Error::NetsyncError(e) => write!(f, "Netsync flow error: {}", e),
         }
     }
 }
@@ -20,6 +22,7 @@ impl std::error::Error for Error {
         match self {
             Error::Parse(e) => Some(e),
             Error::Mtc(e) => Some(e),
+            Error::NetsyncError(e) => Some(e),
         }
     }
 }
@@ -95,6 +98,7 @@ impl std::fmt::Display for MtcError {
 }
 
 impl std::error::Error for MtcError {}
+impl std::error::Error for NetsyncError {}
 
 // Convenience From implementations
 impl From<ParseError> for Error {
@@ -106,5 +110,32 @@ impl From<ParseError> for Error {
 impl From<MtcError> for Error {
     fn from(err: MtcError) -> Self {
         Error::Mtc(err)
+    }
+}
+
+impl From<NetsyncError> for Error {
+    fn from(err: NetsyncError) -> Self {
+        Error::NetsyncError(err)
+    }
+}
+
+/// Error types for MTC quarter frame processing.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum NetsyncError {
+    /// Invalid Master Event Entered
+    InvalidMasterEvent,
+    InvalidSlaveEvent,
+}
+
+impl std::fmt::Display for NetsyncError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NetsyncError::InvalidMasterEvent => {
+                write!(f, "InvalidMasterEvent")
+            }
+            NetsyncError::InvalidSlaveEvent => {
+                write!(f, "InvalidSlaveEvent")
+            }
+        }
     }
 }

@@ -60,16 +60,16 @@ const MMC_LOCATE_CMD_BYTE: u8 = 0x44;
 const MMC_LOCATE_SIZE_BYTE: u8 = 0x06;
 
 /// Expected length of a complete Full-Frame MTC SysEx message.
-const MTC_FULL_FRAME_LENGTH: usize = 10;
+pub const MTC_FULL_FRAME_LENGTH: usize = 10;
 
 /// Expected length of a complete MMC SysEx message.
-const MMC_START_STOP_LENGTH: usize = 6;
+pub const MMC_START_STOP_LENGTH: usize = 6;
 
 /// Expected length of a complete Locate MTC SysEx message.
-const MMC_LOCATE_LENGTH: usize = 13;
+pub const MMC_LOCATE_LENGTH: usize = 13;
 
 /// Expected length of a Quarter-Frame MTC message.
-const MTC_QUARTER_FRAME_LENGTH: usize = 2;
+pub const MTC_QUARTER_FRAME_LENGTH: usize = 2;
 
 // ============================================================================
 // MIDI Event Types
