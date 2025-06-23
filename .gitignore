@@ -1,2 +1,4 @@
 /target
 /c_ffi_tests/out
+/c_ffi_tests/bin
+.vscode
