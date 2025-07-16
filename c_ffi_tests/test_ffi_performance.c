@@ -22,18 +22,18 @@ static void test_encoding_performance(void)
     printf("=========================\n");
 
     const int iterations = 100000;
-    uint8_t buffer[get_max_payload_size()];
+    uint8_t buffer[vlc_rtpmidi_get_max_payload_size()];
     size_t actual_size;
     struct timespec start, end;
 
     // Test MTC Quarter Frame encoding performance
-    CMidiEvent mtc_quarter = create_mtc_quarter_event(3, 7);
+    VlcRtpmidiEvent mtc_quarter = vlc_rtpmidi_create_mtc_quarter_event(3, 7);
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int i = 0; i < iterations; i++)
     {
-        int result = master_netsync_flow_ffi(&mtc_quarter, buffer, sizeof(buffer), &actual_size);
-        if (result != ERROR_SUCCESS)
+        int result = vlc_rtpmidi_master_netsync_flow_ffi(&mtc_quarter, buffer, sizeof(buffer), &actual_size);
+        if (result != VLC_RTPMIDI_ERROR_SUCCESS)
         {
             printf("  ERROR: MTC Quarter encoding failed at iteration %d\n", i);
             return;
@@ -44,13 +44,13 @@ static void test_encoding_performance(void)
     double mtc_quarter_time = get_time_diff(start, end);
 
     // Test MTC Full Frame encoding performance
-    CMidiEvent mtc_full = create_mtc_full_event(1, 30, 45, 15);
+    VlcRtpmidiEvent mtc_full = vlc_rtpmidi_create_mtc_full_event(1, 30, 45, 15);
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int i = 0; i < iterations; i++)
     {
-        int result = master_netsync_flow_ffi(&mtc_full, buffer, sizeof(buffer), &actual_size);
-        if (result != ERROR_SUCCESS)
+        int result = vlc_rtpmidi_master_netsync_flow_ffi(&mtc_full, buffer, sizeof(buffer), &actual_size);
+        if (result != VLC_RTPMIDI_ERROR_SUCCESS)
         {
             printf("  ERROR: MTC Full encoding failed at iteration %d\n", i);
             return;
@@ -61,13 +61,13 @@ static void test_encoding_performance(void)
     double mtc_full_time = get_time_diff(start, end);
 
     // Test MMC Locate encoding performance
-    CMidiEvent mmc_locate = create_mmc_locate_event(2, 15, 30, 10);
+    VlcRtpmidiEvent mmc_locate = vlc_rtpmidi_create_mmc_locate_event(2, 15, 30, 10);
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int i = 0; i < iterations; i++)
     {
-        int result = master_netsync_flow_ffi(&mmc_locate, buffer, sizeof(buffer), &actual_size);
-        if (result != ERROR_SUCCESS)
+        int result = vlc_rtpmidi_master_netsync_flow_ffi(&mmc_locate, buffer, sizeof(buffer), &actual_size);
+        if (result != VLC_RTPMIDI_ERROR_SUCCESS)
         {
             printf("  ERROR: MMC Locate encoding failed at iteration %d\n", i);
             return;
@@ -96,15 +96,15 @@ static void test_decoding_performance(void)
     printf("=========================\n");
 
     const int iterations = 100000;
-    uint8_t buffer[get_max_payload_size()];
+    uint8_t buffer[vlc_rtpmidi_get_max_payload_size()];
     size_t actual_size;
-    CMidiEvent decoded_event;
+    VlcRtpmidiEvent decoded_event;
     struct timespec start, end;
 
     // Prepare test payloads
-    CMidiEvent mtc_quarter = create_mtc_quarter_event(3, 7);
-    int result = master_netsync_flow_ffi(&mtc_quarter, buffer, sizeof(buffer), &actual_size);
-    if (result != ERROR_SUCCESS)
+    VlcRtpmidiEvent mtc_quarter = vlc_rtpmidi_create_mtc_quarter_event(3, 7);
+    int result = vlc_rtpmidi_master_netsync_flow_ffi(&mtc_quarter, buffer, sizeof(buffer), &actual_size);
+    if (result != VLC_RTPMIDI_ERROR_SUCCESS)
     {
         printf("  ERROR: Failed to prepare test payload\n");
         return;
@@ -115,8 +115,8 @@ static void test_decoding_performance(void)
 
     for (int i = 0; i < iterations; i++)
     {
-        result = slave_netsync_flow_ffi(buffer, mtc_quarter_size, &decoded_event);
-        if (result != ERROR_SUCCESS)
+        result = vlc_rtpmidi_slave_netsync_flow_ffi(buffer, mtc_quarter_size, &decoded_event);
+        if (result != VLC_RTPMIDI_ERROR_SUCCESS)
         {
             printf("  ERROR: MTC Quarter decoding failed at iteration %d\n", i);
             return;
@@ -140,38 +140,38 @@ static void test_mixed_operations(void)
     printf("=================================\n");
 
     const int iterations = 50000;
-    uint8_t buffer[get_max_payload_size()];
+    uint8_t buffer[vlc_rtpmidi_get_max_payload_size()];
     size_t actual_size;
-    CMidiEvent decoded_event;
+    VlcRtpmidiEvent decoded_event;
     struct timespec start, end;
 
     // Create different event types for variety
-    CMidiEvent events[] = {
-        create_mtc_quarter_event(0, 5),
-        create_mtc_quarter_event(1, 10),
-        create_mtc_full_event(1, 30, 45, 15),
-        create_mmc_play_event(),
-        create_mmc_stop_event(),
-        create_mmc_locate_event(2, 15, 30, 10)};
+    VlcRtpmidiEvent events[] = {
+        vlc_rtpmidi_create_mtc_quarter_event(0, 5),
+        vlc_rtpmidi_create_mtc_quarter_event(1, 10),
+        vlc_rtpmidi_create_mtc_full_event(1, 30, 45, 15),
+        vlc_rtpmidi_create_mmc_play_event(),
+        vlc_rtpmidi_create_mmc_stop_event(),
+        vlc_rtpmidi_create_mmc_locate_event(2, 15, 30, 10)};
     int num_events = sizeof(events) / sizeof(events[0]);
 
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int i = 0; i < iterations; i++)
     {
-        CMidiEvent *event = &events[i % num_events];
+        VlcRtpmidiEvent *event = &events[i % num_events];
 
         // Encode
-        int result = master_netsync_flow_ffi(event, buffer, sizeof(buffer), &actual_size);
-        if (result != ERROR_SUCCESS)
+        int result = vlc_rtpmidi_master_netsync_flow_ffi(event, buffer, sizeof(buffer), &actual_size);
+        if (result != VLC_RTPMIDI_ERROR_SUCCESS)
         {
             printf("  ERROR: Encoding failed at iteration %d\n", i);
             return;
         }
 
         // Decode
-        result = slave_netsync_flow_ffi(buffer, actual_size, &decoded_event);
-        if (result != ERROR_SUCCESS)
+        result = vlc_rtpmidi_slave_netsync_flow_ffi(buffer, actual_size, &decoded_event);
+        if (result != VLC_RTPMIDI_ERROR_SUCCESS)
         {
             printf("  ERROR: Decoding failed at iteration %d\n", i);
             return;
@@ -202,8 +202,8 @@ static void test_memory_usage(void)
     printf("====================\n");
 
     // Report structure sizes
-    printf("  Event structure size: %zu bytes\n", sizeof(CMidiEvent));
-    printf("  Maximum payload size: %zu bytes\n", get_max_payload_size());
+    printf("  Event structure size: %zu bytes\n", sizeof(VlcRtpmidiEvent));
+    printf("  Maximum payload size: %zu bytes\n", vlc_rtpmidi_get_max_payload_size());
 
     // Test with various buffer sizes
     uint8_t small_buffer[8];
@@ -211,22 +211,22 @@ static void test_memory_usage(void)
     uint8_t large_buffer[64];
     size_t actual_size;
 
-    CMidiEvent test_event = create_mtc_full_event(1, 30, 45, 15);
+    VlcRtpmidiEvent test_event = vlc_rtpmidi_create_mtc_full_event(1, 30, 45, 15);
 
     // Test small buffer (should fail)
-    int result = master_netsync_flow_ffi(&test_event, small_buffer, sizeof(small_buffer), &actual_size);
+    int result = vlc_rtpmidi_master_netsync_flow_ffi(&test_event, small_buffer, sizeof(small_buffer), &actual_size);
     printf("  Small buffer (8 bytes):   %s\n",
-           result == ERROR_BUFFER_TOO_SMALL ? "Correctly rejected" : "Unexpectedly succeeded");
+           result == VLC_RTPMIDI_ERROR_BUFFER_TOO_SMALL ? "Correctly rejected" : "Unexpectedly succeeded");
 
     // Test medium buffer (should succeed)
-    result = master_netsync_flow_ffi(&test_event, medium_buffer, sizeof(medium_buffer), &actual_size);
+    result = vlc_rtpmidi_master_netsync_flow_ffi(&test_event, medium_buffer, sizeof(medium_buffer), &actual_size);
     printf("  Medium buffer (16 bytes): %s (payload: %zu bytes)\n",
-           result == ERROR_SUCCESS ? "Success" : "Failed", actual_size);
+           result == VLC_RTPMIDI_ERROR_SUCCESS ? "Success" : "Failed", actual_size);
 
     // Test large buffer (should succeed)
-    result = master_netsync_flow_ffi(&test_event, large_buffer, sizeof(large_buffer), &actual_size);
+    result = vlc_rtpmidi_master_netsync_flow_ffi(&test_event, large_buffer, sizeof(large_buffer), &actual_size);
     printf("  Large buffer (64 bytes):  %s (payload: %zu bytes)\n",
-           result == ERROR_SUCCESS ? "Success" : "Failed", actual_size);
+           result == VLC_RTPMIDI_ERROR_SUCCESS ? "Success" : "Failed", actual_size);
     printf("\n");
 }
 
